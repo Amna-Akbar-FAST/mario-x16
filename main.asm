@@ -69,11 +69,15 @@ SetupProgram:
     ret
 
 ;Subroutine: MainLoop
-;Purpose:    Placeholder for game loop execution.
-;Inputs:  None | Outputs: None | Registers Preserved: ALL
+;Purpose:    Initializes working map and renders Module 3 level test screen.
+;Inputs:     None | Outputs: None | Registers Preserved: ALL
 MainLoop:
     push ax
-    call RenderPaletteScreen        ; Draw Module 2 color validation screen
+    call ResetMap                   ; Copy original map into working map
+
+    push 0                          ; start_col = 0 (first 20 columns; change to 20 or 40 to test scrolling windows)
+    call DrawMap                    ; Render visible 20x12 tile window
+
     mov ah, 00h                     ; Wait for any keypress so screen stays visible
     int 16h
     pop ax
@@ -342,10 +346,469 @@ palette_pixel_loop:
     pop bx
     pop ax
     ret
+
+
+; ==============================================================================
+; MODULE 3: LEVEL MAP AND TILE DRAWING
+; Author: Rayyan
+; ==============================================================================
+
+; Tile Code Constants (Appendix A.2)
+TILE_SKY            equ 00h         ; Empty sky (non-solid)
+TILE_GROUND         equ 01h         ; Ground block (solid)
+TILE_BRICK          equ 02h         ; Breakable brick block (solid)
+TILE_QBLOCK_COIN    equ 03h         ; Question block with coin (solid)
+TILE_QBLOCK_MUSH    equ 04h         ; Question block with mushroom (solid)
+TILE_EMPTY_BLOCK    equ 05h         ; Used/empty block (solid)
+TILE_PIPE_TL        equ 06h         ; Pipe top-left (solid)
+TILE_PIPE_TR        equ 07h         ; Pipe top-right (solid)
+TILE_PIPE_BL        equ 08h         ; Pipe body-left (solid)
+TILE_PIPE_BR        equ 09h         ; Pipe body-right (solid)
+TILE_STAIR          equ 0Ah         ; Stair / flagpole base block (solid)
+TILE_COIN           equ 0Bh         ; Free-floating coin (non-solid)
+TILE_FLAGPOLE       equ 0Ch         ; Flagpole segment (non-solid, win trigger)
+
+LEVEL_MAP_BYTES     equ LEVEL_WIDTH_TILES * GRID_ROWS ; 60 * 12 = 720 bytes
+
+; Procedure: ResetMap
+; Purpose:   Restores the working level map from the untouched original level map
+;            using a fast block memory transfer (REP MOVSB).
+; Inputs:    None
+; Outputs:   Overwrites level_map_work with level_map_orig (720 bytes)
+; Registers: Preserves ALL
+ResetMap:
+    push ax
+    push cx
+    push si
+    push di
+    push ds
+    push es
+
+    mov ax, cs
+    mov ds, ax                      ; Ensure DS = CS (.COM single segment)
+    mov es, ax                      ; Ensure ES = CS
+    cld                             ; Forward direction
+
+    mov si, level_map_orig          ; Source: original level layout
+    mov di, level_map_work          ; Destination: active working level layout
+    mov cx, LEVEL_MAP_BYTES         ; 720 bytes (60 cols x 12 rows)
+    rep movsb                       ; Copy entire map in one block instruction
+
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+; Procedure: GetTile
+; Purpose:   Looks up the tile code in level_map_work at world pixel coordinates (px, py).
+; Inputs:    Stack parameters:
+;              [bp+6] = px (world X in pixels, 0..959)
+;              [bp+4] = py (world Y in pixels, 0..191)
+; Outputs:   AL = tile code at (px / 16, py / 16) (returns TILE_SKY if out of bounds)
+; Registers: Modifies AX (return value in AL); preserves all other registers (cleans 4 bytes)
+GetTile:
+    push bp
+    mov bp, sp
+    push bx
+    push cx
+    push si
+
+    ; Validate world pixel coordinates
+    mov ax, [bp+6]                  ; AX = px
+    cmp ax, LEVEL_WIDTH_PX          ; Must be < 960
+    jae gettile_out_of_bounds
+
+    mov bx, [bp+4]                  ; BX = py
+    cmp bx, 192                     ; Must be < 192 (12 rows * 16 px)
+    jae gettile_out_of_bounds
+
+    ; Convert pixels to tile grid indices: col = px >> 4, row = py >> 4
+    shr ax, 4                       ; AX = tile_col (0..59)
+    shr bx, 4                       ; BX = tile_row (0..11)
+
+    ; Compute 1D array offset: offset = (tile_row * 60) + tile_col
+    ; Using shifts: row * 60 = (row * 64) - (row * 4) = (row << 6) - (row << 2)
+    mov si, bx                      ; SI = tile_row
+    shl si, 6                       ; SI = row * 64
+    mov cx, bx
+    shl cx, 2                       ; CX = row * 4
+    sub si, cx                      ; SI = row * 60
+    add si, ax                      ; SI = row * 60 + tile_col
+
+    xor ah, ah
+    mov al, [level_map_work + si]   ; Fetch tile byte from working map
+    jmp gettile_done
+
+gettile_out_of_bounds:
+    mov ax, TILE_SKY                ; Default non-solid sky outside map bounds
+
+gettile_done:
+    pop si
+    pop cx
+    pop bx
+    pop bp
+    ret 4
+
+; Procedure: DrawTile
+; Purpose:   Renders a 16x16 tile graphic at screen coordinates (screen_x, screen_y)
+;            based on the given tile code using FillRect primitives.
+; Inputs:    Stack parameters:
+;              [bp+8] = screen_x (top-left X on screen)
+;              [bp+6] = screen_y (top-left Y on screen)
+;              [bp+4] = tile_code (00h..0Ch)
+; Outputs:   Draws 16x16 tile pixels to VGA memory
+; Registers: Preserves ALL (cleans 6 bytes from stack)
+DrawTile:
+    push bp
+    mov bp, sp
+    push ax
+    push bx
+    push cx
+
+    mov bx, [bp+8]                  ; BX = screen_x
+    mov cx, [bp+6]                  ; CX = screen_y
+    mov ax, [bp+4]                  ; AL = tile_code
+
+    ; 1. Fill base 16x16 tile background with sky blue first
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_SKY
+    call FillRect
+
+    ; Dispatch based on tile_code
+    cmp al, TILE_SKY
+    je drawtile_exit                ; Sky is already drawn
+
+    cmp al, TILE_GROUND
+    je drawtile_ground
+
+    cmp al, TILE_BRICK
+    je drawtile_brick
+
+    cmp al, TILE_QBLOCK_COIN
+    je drawtile_qblock
+
+    cmp al, TILE_QBLOCK_MUSH
+    je drawtile_qblock
+
+    cmp al, TILE_EMPTY_BLOCK
+    je drawtile_empty
+
+    cmp al, TILE_PIPE_TL
+    je drawtile_pipe_top
+
+    cmp al, TILE_PIPE_TR
+    je drawtile_pipe_top
+
+    cmp al, TILE_PIPE_BL
+    je drawtile_pipe_body
+
+    cmp al, TILE_PIPE_BR
+    je drawtile_pipe_body
+
+    cmp al, TILE_STAIR
+    je drawtile_stair
+
+    cmp al, TILE_COIN
+    je drawtile_coin
+
+    cmp al, TILE_FLAGPOLE
+    je drawtile_flagpole
+
+    jmp drawtile_exit
+
+drawtile_ground:
+    ; Top 4px grass strip
+    push bx
+    push cx
+    push TILE_SIZE
+    push 4
+    push COLOR_GROUND_TOP
+    call FillRect
+    ; Bottom 12px brown dirt
+    mov ax, cx
+    add ax, 4
+    push bx
+    push ax
+    push TILE_SIZE
+    push 12
+    push COLOR_GROUND_DIRT
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_brick:
+    ; Outer dark outline
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_BLACK
+    call FillRect
+    ; Inner brick face (14x14)
+    mov ax, bx
+    inc ax
+    push ax
+    mov ax, cx
+    inc ax
+    push ax
+    push 14
+    push 14
+    push COLOR_BRICK
+    call FillRect
+    ; Horizontal mortar line across middle
+    mov ax, cx
+    add ax, 7
+    push bx
+    push ax
+    push TILE_SIZE
+    push 1
+    push COLOR_BLACK
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_qblock:
+    ; Outer black border
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_BLACK
+    call FillRect
+    ; Inner yellow block (14x14)
+    mov ax, bx
+    inc ax
+    push ax
+    mov ax, cx
+    inc ax
+    push ax
+    push 14
+    push 14
+    push COLOR_QBLOCK
+    call FillRect
+    ; Simple '?' emblem in center (white)
+    mov ax, bx
+    add ax, 6
+    push ax
+    mov ax, cx
+    add ax, 4
+    push ax
+    push 4
+    push 5
+    push COLOR_HUD_TEXT
+    call FillRect
+    mov ax, bx
+    add ax, 7
+    push ax
+    mov ax, cx
+    add ax, 10
+    push ax
+    push 2
+    push 2
+    push COLOR_HUD_TEXT
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_empty:
+    ; Outer black border
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_BLACK
+    call FillRect
+    ; Inner muted empty block (14x14)
+    mov ax, bx
+    inc ax
+    push ax
+    mov ax, cx
+    inc ax
+    push ax
+    push 14
+    push 14
+    push COLOR_EMPTY_BLOCK
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_pipe_top:
+    ; Dark green base
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_PIPE_DARK
+    call FillRect
+    ; Bright green highlight rim
+    mov ax, bx
+    inc ax
+    push ax
+    mov ax, cx
+    inc ax
+    push ax
+    push 14
+    push 14
+    push COLOR_PIPE_LIGHT
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_pipe_body:
+    ; Narrower pipe shaft (inset by 1px)
+    mov ax, bx
+    inc ax
+    push ax
+    push cx
+    push 14
+    push TILE_SIZE
+    push COLOR_PIPE_DARK
+    call FillRect
+    mov ax, bx
+    add ax, 2
+    push ax
+    push cx
+    push 12
+    push TILE_SIZE
+    push COLOR_PIPE_LIGHT
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_stair:
+    ; Outer black border
+    push bx
+    push cx
+    push TILE_SIZE
+    push TILE_SIZE
+    push COLOR_BLACK
+    call FillRect
+    ; Inner tan stair block (14x14)
+    mov ax, bx
+    inc ax
+    push ax
+    mov ax, cx
+    inc ax
+    push ax
+    push 14
+    push 14
+    push COLOR_STAIR
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_coin:
+    ; Centered 8x12 gold coin oval
+    mov ax, bx
+    add ax, 4
+    push ax
+    mov ax, cx
+    add ax, 2
+    push ax
+    push 8
+    push 12
+    push COLOR_COIN
+    call FillRect
+    jmp drawtile_exit
+
+drawtile_flagpole:
+    ; Centered 4x16 green vertical pole
+    mov ax, bx
+    add ax, 6
+    push ax
+    push cx
+    push 4
+    push TILE_SIZE
+    push COLOR_FLAG
+    call FillRect
+
+drawtile_exit:
+    pop cx
+    pop bx
+    pop ax
+    pop bp
+    ret 6
+
+; Procedure: DrawMap
+; Purpose:   Draws a visible 20-column by 12-row window of level_map_work
+;            starting at tile column start_col (0..40). Row 0 is skipped (HUD).
+; Inputs:    Stack parameters:
+;              [bp+4] = start_col (first visible tile column, 0..40)
+; Outputs:   Renders visible map tiles to screen
+; Registers: Preserves ALL (cleans 2 bytes from stack)
+DrawMap:
+    push bp
+    mov bp, sp
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+
+    ; Draw black HUD bar across row 0 (y = 0..15)
+    push 0
+    push 0
+    push SCREEN_WIDTH
+    push HUD_HEIGHT
+    push COLOR_BLACK
+    call FillRect
+
+    ; Clamp start_col so start_col + 20 <= 60
+    mov di, [bp+4]                  ; DI = start_col
+    cmp di, LEVEL_WIDTH_TILES - GRID_COLS
+    jbe drawmap_start_ok
+    mov di, LEVEL_WIDTH_TILES - GRID_COLS
+
+drawmap_start_ok:
+    mov dx, 1                       ; DX = current row (1..11; row 0 is HUD)
+
+drawmap_row_loop:
+    ; Calculate row base offset: row * 60 = (row << 6) - (row << 2)
+    mov si, dx
+    shl si, 6                       ; SI = row * 64
+    mov ax, dx
+    shl ax, 2                       ; AX = row * 4
+    sub si, ax                      ; SI = row * 60
+    add si, di                      ; SI = row * 60 + start_col
+
+    xor cx, cx                      ; CX = visible screen column (0..19)
+
+drawmap_col_loop:
+    ; Calculate screen_x = visible_col * 16
+    mov ax, cx
+    shl ax, 4
+    push ax                         ; Param 1: screen_x
+
+    ; Calculate screen_y = row * 16
+    mov ax, dx
+    shl ax, 4
+    push ax                         ; Param 2: screen_y
+
+    ; Fetch tile code from working map
+    xor ah, ah
+    mov al, [level_map_work + si]
+    push ax                         ; Param 3: tile_code
+    call DrawTile
+
+    inc si                          ; Next map column
+    inc cx                          ; Next screen column
+    cmp cx, GRID_COLS               ; Drawn all 20 visible columns?
+    jb drawmap_col_loop
+
+    inc dx                          ; Next row
+    cmp dx, GRID_ROWS               ; Drawn rows 1..11?
+    jb drawmap_row_loop
+
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    pop bp
+    ret 2
 ; GAME DATA & VARIABLES
 ; Placed at the end of the program to prevent execution as instructions.
-
-
 
 
 ;Hero (Mario) Data Structure
@@ -376,3 +839,38 @@ palette_test_table:
     db COLOR_QBLOCK,     COLOR_EMPTY_BLOCK,COLOR_PIPE_LIGHT,  COLOR_COIN
     db COLOR_MARIO_RED,  COLOR_MARIO_BLUE, COLOR_MARIO_SKIN,  COLOR_GOOMBA
     db COLOR_KOOPA,      COLOR_STAIR,      COLOR_FLAG,        COLOR_HUD_TEXT
+
+; ==============================================================================
+; MODULE 3: LEVEL MAP DATA (60 Columns x 12 Rows = 720 Bytes)
+; Tile Codes: 0=Sky, 1=Ground, 2=Brick, 3=?Coin, 4=?Mushroom, 5=Empty,
+;             6=PipeTL, 7=PipeTR, 8=PipeBL, 9=PipeBR, 10=Stair, 11=Coin, 12=Flag
+; ==============================================================================
+level_map_orig:
+    ; Row 0: Reserved for HUD (16px top strip)
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0
+    ; Row 1: Upper sky
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0
+    ; Row 2: Flagpole top (col 56, row 2)
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,12,0,0,0
+    ; Row 3: High ?-block (col 15) + Flagpole
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,3,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,12,0,0,0
+    ; Row 4: Flagpole
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,12,0,0,0
+    ; Row 5: Free coins above pits (cols 21-24 & 39-41) + Flagpole
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,11,11,11,11,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,11, 11,11,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,12,0,0,0
+    ; Row 6: Early Mushroom ?-block (col 8), Brick/Coin Group 1 (cols 13-17), Group 2 (cols 30-32, 44-46), Top Stair (col 52) + Flagpole
+    db 0,0,0,0,0,0,0,0,4,0, 0,0,0,2,3,2,3,2,0,0, 0,0,0,0,0,0,0,0,0,0, 2,4,2,0,0,0,0,0,0,0, 0,0,0,0,2,2,2,0,0,0, 0,0,10,0,0,0,12,0,0,0
+    ; Row 7: 3-tile Pipe Top (cols 35-36), Stair step 3 (cols 51-52) + Flagpole
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,6,7,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,10,10,0,0,0,12,0,0,0
+    ; Row 8: 2-tile Pipe Top (cols 27-28), Pipe 2 Body (cols 35-36), Free coins (cols 30-32), Stair step 2 (cols 50-52) + Flagpole bottom (row 8)
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,6,7,0, 11,11,11,0,0,8,9,0,0,0, 0,0,0,0,0,0,0,0,0,0, 10,10,10,0,0,0,12,0,0,0
+    ; Row 9: Ground surface level — Pipe 1 Body (cols 27-28), Pipe 2 Body (cols 35-36), Free coins (cols 45-46), Stair step 1 (cols 49-52), Flag base block (col 56)
+    db 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,8,9,0, 0,0,0,0,0,8,9,0,0,0, 0,0,0,0,0,11,11,0,0,10, 10,10,10,0,0,0,10,0,0,0
+    ; Row 10: Ground top layer (Pit 1 at cols 22-23, Pit 2 at cols 39-41)
+    db 1,1,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1, 1,1,0,0,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,0, 0,0,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1
+    ; Row 11: Ground bottom layer (Pit 1 at cols 22-23, Pit 2 at cols 39-41)
+    db 1,1,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1, 1,1,0,0,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,0, 0,0,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1
+
+; Working copy of the level map (modified during gameplay, restored by ResetMap)
+level_map_work:
+    times LEVEL_MAP_BYTES db 0
