@@ -61,25 +61,65 @@ start:
     call CleanExit                  ; Returns to DOS safely
 
 ; Subroutine:SetupProgram
-; Purpose: Initializes system components and variable structures.
+; Purpose: Initializes system components, off-screen frame buffer, and variables.
 ; Inputs: None | Outputs: None | Registers Preserved: ALL
-
 SetupProgram:
     call InitVideoMode13h           ; Switch to VGA Mode 13h (320x200)
+    call InitFrameBuffer            ; Allocate 64,000-byte off-screen buffer segment
     ret
 
 ;Subroutine: MainLoop
-;Purpose:    Initializes working map and renders Module 3 level test screen.
+;Purpose:    Tests Module 5 double buffering and Module 6 smooth camera scrolling.
 ;Inputs:     None | Outputs: None | Registers Preserved: ALL
 MainLoop:
     push ax
+    push cx
+
     call ResetMap                   ; Copy original map into working map
+    mov word [camera_x], 0          ; Start camera at world X = 0
+    mov word [mario_world_x], 0020h ; Reset Mario to starting X = 32 (8.8 fixed-point)
 
-    push 0                          ; start_col = 0 (first 20 columns; change to 20 or 40 to test scrolling windows)
-    call DrawMap                    ; Render visible 20x12 tile window
-
-    mov ah, 00h                     ; Wait for any keypress so screen stays visible
+main_scroll_test_loop:
+    ; Check if user pressed a key (non-blocking check via BIOS INT 16h, AH=01h)
+    mov ah, 01h
     int 16h
+    jnz main_test_exit              ; Exit test screen when any key is pressed
+
+    ; 1. Clear off-screen frame buffer with sky blue using REP STOSW
+    push COLOR_SKY
+    call ClearFrameBuffer
+
+    ; 2. Draw pixel-scrolled visible tiles into off-screen buffer
+    call DrawScrolledMap
+
+    ; 3. Draw HUD strip at top of off-screen buffer
+    push 0
+    push 0
+    push SCREEN_WIDTH
+    push HUD_HEIGHT
+    push COLOR_BLACK
+    call FillRect
+
+    ; 4. Copy completed off-screen frame buffer to VGA 0A000h using REP MOVSW
+    call FlipFrameBuffer
+
+    ; Advance Mario right by 2 px/frame (0200h in 8.8) to verify camera tracking & 640 cap
+    mov ax, [mario_world_x]
+    add ax, 0200h
+    cmp ax, (LEVEL_WIDTH_PX - TILE_SIZE) << 8
+    jbe main_update_mario_x
+    mov ax, 0020h                   ; Loop back to start for continuous preview
+    mov word [camera_x], 0
+main_update_mario_x:
+    mov [mario_world_x], ax
+
+    call UpdateCamera               ; Apply Section 5.3 camera tracking & boundary rules
+    jmp main_scroll_test_loop
+
+main_test_exit:
+    mov ah, 00h                     ; Consume the keypress from buffer
+    int 16h
+    pop cx
     pop ax
     ret
 
@@ -171,9 +211,8 @@ PutPixel:
     cmp bx, SCREEN_HEIGHT
     jae putpixel_exit
 
-    ; Set ES to VGA segment 0A000h
-    mov di, VGA_SEGMENT
-    mov es, di
+    ; Set ES to active off-screen render buffer segment
+    mov es, [render_target_seg]
 
     ; Offset = (y * 320) + x = (y << 8) + (y << 6) + x
     mov di, bx                      ; DI = y
@@ -223,8 +262,7 @@ FillRect:
     jle fillrect_exit
 
     ; Set ES to VGA segment 0A000h and clear direction flag
-    mov ax, VGA_SEGMENT
-    mov es, ax
+    mov es, [render_target_seg]
     cld
 
     ; Starting offset: DI = (y << 8) + (y << 6) + x
@@ -839,8 +877,7 @@ DrawSprite:
     ; Ensure DS = CS (.COM single segment) and ES = VGA_SEGMENT (0A000h)
     mov ax, cs
     mov ds, ax
-    mov ax, VGA_SEGMENT
-    mov es, ax
+    mov es, [render_target_seg]
 
     mov dx, [bp+4]                  ; DX = flags
 
@@ -954,6 +991,436 @@ drawsprite_exit:
     pop ax
     pop bp
     ret 8
+
+; ==============================================================================
+; MODULE 5 & MODULE 6: FRAME BUFFER & SCROLLING CAMERA
+; Author: Rayyan (Phase 2 - Step 3)
+; ==============================================================================
+
+; Frame Buffer & Sprite Constants
+FRAME_BUFFER_BYTES  equ 64000       ; 320 * 200 bytes for full Mode 13h screen
+FRAME_BUFFER_WORDS  equ 32000       ; 64,000 / 2 words for REP STOSW / REP MOVSW
+FRAME_BUFFER_PARAS  equ 4000        ; 64,000 / 16 paragraphs for DOS INT 21h alloc
+VISIBLE_DRAW_COLS   equ 21          ; 20 visible columns + 1 partial edge column
+
+; Safe Sprite Constants (if not already defined by Module 4 bitmap header)
+%ifndef SPRITE_W
+SPRITE_W            equ 16          ; Standard sprite width (16px)
+SPRITE_H_SMALL      equ 16          ; Small Mario / enemy height (16px)
+SPRITE_H_SUPER      equ 32          ; Super Mario height (32px)
+SPR_FLAG_FLIP_H     equ 01h         ; Bit 0: Mirror horizontally
+SPR_FLAG_TALL       equ 02h         ; Bit 1: 16x32 tall sprite
+SPR_FLAG_BLINK      equ 04h         ; Bit 2: Alternate-frame invulnerability blink
+%endif
+
+; Procedure: InitFrameBuffer
+; Purpose:   Allocates a secondary 64,000-byte (4,000-paragraph) memory segment
+;            above the .COM program for flicker-free off-screen rendering.
+;            Falls back to CS + 1000h if DOS MCB covers all conventional memory.
+; Inputs:    None
+; Outputs:   Sets [frame_buffer_seg] and [render_target_seg]
+; Registers: Preserves ALL
+InitFrameBuffer:
+    push ax
+    push bx
+
+    ; Shrink .COM memory block to 64 KB (1000h paragraphs) so DOS can allocate above it
+    mov ax, cs
+    mov es, ax
+    mov ah, 4Ah                     ; DOS Modify Memory Block
+    mov bx, 1000h                   ; Keep 64 KB for .COM code, data, and stack
+    int 21h
+
+    ; Request 4,000 paragraphs (64,000 bytes) from DOS
+    mov ah, 48h                     ; DOS Allocate Memory Block
+    mov bx, FRAME_BUFFER_PARAS
+    int 21h
+    jnc initfb_store_seg            ; Carry clear = AX holds allocated segment
+
+    ; Fallback: Use next 64 KB segment immediately above .COM segment (CS + 1000h)
+    mov ax, cs
+    add ax, 1000h
+
+initfb_store_seg:
+    mov [frame_buffer_seg], ax
+    mov [render_target_seg], ax     ; Direct all drawing primitives to off-screen buffer
+
+    pop bx
+    pop ax
+    ret
+
+; Procedure: ClearFrameBuffer
+; Purpose:   Fills the entire 64,000-byte off-screen frame buffer with a single
+;            background color using fast word string operations (REP STOSW).
+; Inputs:    Stack parameters:
+;              [bp+4] = fill color (0..255)
+; Outputs:   Writes 32,000 words (64,000 bytes) to [frame_buffer_seg]
+; Registers: Preserves ALL (cleans 2 bytes from stack)
+ClearFrameBuffer:
+    push bp
+    mov bp, sp
+    push ax
+    push cx
+    push di
+    push es
+
+    mov es, [frame_buffer_seg]      ; Target off-screen frame buffer segment
+    xor di, di                      ; Start at offset 0000h
+    cld                             ; Forward direction
+
+    mov al, [bp+4]                  ; AL = background color byte
+    mov ah, al                      ; AX = two identical color bytes for word fill
+    mov cx, FRAME_BUFFER_WORDS      ; 32,000 words = 64,000 bytes
+    rep stosw                       ; Clear entire off-screen buffer in one block fill
+
+    pop es
+    pop di
+    pop cx
+    pop ax
+    pop bp
+    ret 2
+
+; Procedure: FlipFrameBuffer
+; Purpose:   Copies the completed 64,000-byte off-screen frame buffer into VGA
+;            video memory (0A000h) in one fast block transfer (REP MOVSW).
+; Inputs:    None
+; Outputs:   Updates VGA screen (0A000h:0000h..F9FFh) without flicker
+; Registers: Preserves ALL
+FlipFrameBuffer:
+    push ax
+    push cx
+    push si
+    push di
+    push ds
+    push es
+
+    mov ax, VGA_SEGMENT
+    mov es, ax                      ; Destination: VGA Mode 13h video memory (0A000h)
+    mov ds, [cs:frame_buffer_seg]   ; Source: off-screen frame buffer segment
+
+    xor si, si                      ; Source offset = 0
+    xor di, di                      ; Destination offset = 0
+    cld                             ; Forward direction
+    mov cx, FRAME_BUFFER_WORDS      ; 32,000 words = 64,000 bytes
+    rep movsw                       ; Blit entire buffer to VGA memory
+
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+; Procedure: UpdateCamera
+; Purpose:   Updates camera_x according to Section 5.3 scrolling rules:
+;            - Follows Mario right once screen_x > 160
+;            - Never scrolls left (camera_x only increases)
+;            - Clamps camera_x at MAX_CAMERA_X (640 for 60-tile level)
+;            - Enforces invisible left wall at world_x >= camera_x and right level edge
+; Inputs:    Reads/updates [mario_world_x], [mario_vx], and [camera_x]
+; Outputs:   Updated [camera_x] and clamped [mario_world_x]
+; Registers: Preserves ALL
+UpdateCamera:
+    push ax
+    push bx
+
+    ; Extract whole-pixel world X from 8.8 fixed-point mario_world_x (high byte)
+    mov ax, [mario_world_x]
+    mov al, ah
+    xor ah, ah                      ; AX = mario_world_px (0..959)
+    mov bx, [camera_x]              ; BX = current camera_x (0..640)
+
+    ; 1. Compute screen_x = mario_world_px - camera_x
+    sub ax, bx                      ; AX = screen_x (signed)
+
+    ; 2. If screen_x > 160 (CAMERA_MID_X), compute new_camera = mario_world_px - 160
+    cmp ax, CAMERA_MID_X
+    jle updatecam_check_walls
+
+    mov ax, [mario_world_x]
+    mov al, ah
+    xor ah, ah                      ; AX = mario_world_px
+    sub ax, CAMERA_MID_X            ; AX = candidate new_camera
+
+    ; 3. Clamp new_camera <= MAX_CAMERA_X (640)
+    cmp ax, MAX_CAMERA_X
+    jbe updatecam_check_monotonic
+    mov ax, MAX_CAMERA_X
+
+updatecam_check_monotonic:
+    ; 4. Never decrease camera_x: camera_x = max(camera_x, new_camera)
+    cmp ax, bx
+    jbe updatecam_check_walls
+    mov [camera_x], ax
+    mov bx, ax                      ; BX = updated camera_x
+
+updatecam_check_walls:
+    ; 5. Left edge invisible wall: if mario_world_px < camera_x, clamp to camera_x
+    mov ax, [mario_world_x]
+    mov al, ah
+    xor ah, ah                      ; AX = mario_world_px
+    cmp ax, bx
+    jge updatecam_check_right_end
+
+    mov ah, bl                      ; Set whole-pixel part = camera_x
+    xor al, al                      ; Clear fractional byte
+    mov [mario_world_x], ax
+    mov word [mario_vx], 0          ; Stop horizontal velocity against left edge
+    jmp updatecam_done
+
+updatecam_check_right_end:
+    ; 6. Right end of level: prevent Mario from walking past LEVEL_WIDTH_PX - 16 (944)
+    cmp ax, LEVEL_WIDTH_PX - TILE_SIZE
+    jbe updatecam_done
+
+    mov ax, (LEVEL_WIDTH_PX - TILE_SIZE) << 8
+    mov [mario_world_x], ax
+    mov word [mario_vx], 0
+
+updatecam_done:
+    pop bx
+    pop ax
+    ret
+
+; Procedure: WorldToScreenX
+; Purpose:   Translates a whole-pixel world X coordinate to a signed screen X
+;            coordinate (screen_x = world_x - camera_x) and checks visibility.
+; Inputs:    Stack parameters:
+;              [bp+4] = world_x (whole pixels)
+; Outputs:   AX = signed screen_x; CF = 0 if visible (-16 < screen_x < 320), CF = 1 if culled
+; Registers: Modifies AX and FLAGS; preserves all other registers (cleans 2 bytes)
+WorldToScreenX:
+    push bp
+    mov bp, sp
+
+    mov ax, [bp+4]                  ; AX = world_x
+    sub ax, [camera_x]              ; AX = screen_x = world_x - camera_x
+
+    ; Check visibility range: -16 < screen_x < 320
+    cmp ax, -TILE_SIZE
+    jle worldtoscreen_hidden
+    cmp ax, SCREEN_WIDTH
+    jge worldtoscreen_hidden
+
+    clc                             ; Visible on screen
+    jmp worldtoscreen_exit
+
+worldtoscreen_hidden:
+    stc                             ; Off-screen (culled)
+
+worldtoscreen_exit:
+    pop bp
+    ret 2
+
+; Procedure: DrawScrolledMap
+; Purpose:   Renders the 20 visible tile columns plus 1 partial edge column with
+;            pixel-level horizontal scrolling:
+;              first_col = camera_x >> 4
+;              pixel_offset = camera_x & 0Fh
+;            Clips left and right edge columns cleanly so tiles never wrap.
+; Inputs:    Reads [camera_x] and [level_map_work]
+; Outputs:   Draws visible scrolled tiles into [render_target_seg]
+; Registers: Preserves ALL
+DrawScrolledMap:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+
+    mov ax, [camera_x]              ; AX = camera_x (0..640)
+    mov di, ax
+    shr di, 4                       ; DI = first_col = camera_x / 16
+    and ax, 000Fh                   ; AX = fine_scroll_x = camera_x mod 16 (0..15)
+    mov [scroll_fine_x], ax         ; Save fine pixel offset
+
+    mov dx, 1                       ; DX = map row (1..11; row 0 is HUD)
+
+scrolledmap_row_loop:
+    ; Compute row base offset: row * 60 = (row << 6) - (row << 2)
+    mov si, dx
+    shl si, 6                       ; SI = row * 64
+    mov ax, dx
+    shl ax, 2                       ; AX = row * 4
+    sub si, ax                      ; SI = row * 60
+    add si, di                      ; SI = row * 60 + first_col
+
+    xor cx, cx                      ; CX = screen column counter (0..20)
+    mov bx, [scroll_fine_x]
+    neg bx                          ; BX = screen_x = -(camera_x mod 16) (-15..0)
+
+scrolledmap_col_loop:
+    ; Stop if map column reaches or exceeds LEVEL_WIDTH_TILES (60)
+    mov ax, di
+    add ax, cx
+    cmp ax, LEVEL_WIDTH_TILES
+    jae scrolledmap_next_row
+
+    ; Stop if screen_x >= SCREEN_WIDTH (320)
+    cmp bx, SCREEN_WIDTH
+    jge scrolledmap_next_row
+
+    ; Fetch tile code from working map
+    xor ah, ah
+    mov al, [level_map_work + si]
+
+    ; Skip drawing sky tiles since ClearFrameBuffer already filled sky blue
+    cmp al, TILE_SKY
+    je scrolledmap_advance_col
+
+    ; If tile is partially off left edge (screen_x < 0) or right edge (screen_x > 304),
+    ; draw clipped columns safely; otherwise draw full 16x16 tile via DrawTile
+    cmp bx, 0
+    jl scrolledmap_clipped_tile
+    cmp bx, SCREEN_WIDTH - TILE_SIZE
+    jg scrolledmap_clipped_tile
+
+    ; Full on-screen tile (0 <= screen_x <= 304)
+    push bx                         ; screen_x
+    mov ax, dx
+    shl ax, 4
+    push ax                         ; screen_y = row * 16
+    xor ah, ah
+    mov al, [level_map_work + si]
+    push ax                         ; tile_code
+    call DrawTile
+    jmp scrolledmap_advance_col
+
+scrolledmap_clipped_tile:
+    ; Clipped edge tile: draw only visible horizontal slice [clip_x, clip_w]
+    push bx                         ; screen_x (may be -15..-1 or 305..319)
+    mov ax, dx
+    shl ax, 4
+    push ax                         ; screen_y = row * 16
+    xor ah, ah
+    mov al, [level_map_work + si]
+    push ax                         ; tile_code
+    call DrawClippedEdgeTile
+
+scrolledmap_advance_col:
+    inc si                          ; Next map column
+    inc cx                          ; Next screen column index
+    add bx, TILE_SIZE               ; screen_x += 16
+    cmp cx, VISIBLE_DRAW_COLS       ; Process up to 21 columns (20 + 1 partial)
+    jb scrolledmap_col_loop
+
+scrolledmap_next_row:
+    inc dx                          ; Next row
+    cmp dx, GRID_ROWS               ; Rows 1..11
+    jb scrolledmap_row_loop
+
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Procedure: DrawClippedEdgeTile
+; Purpose:   Safely renders a tile that straddles the left (x < 0) or right
+;            (x + 16 > 320) screen boundary without writing out of bounds.
+; Inputs:    Stack parameters:
+;              [bp+8] = screen_x (signed)
+;              [bp+6] = screen_y (0..176)
+;              [bp+4] = tile_code
+; Outputs:   Draws visible clipped slice of tile into [render_target_seg]
+; Registers: Preserves ALL (cleans 6 bytes from stack)
+DrawClippedEdgeTile:
+    push bp
+    mov bp, sp
+    push ax
+    push bx
+    push cx
+    push dx
+
+    mov bx, [bp+8]                  ; BX = screen_x (signed)
+    mov cx, TILE_SIZE               ; CX = visible width (starts at 16)
+
+    ; Clip left edge if screen_x < 0
+    cmp bx, 0
+    jge clipedge_check_right
+    add cx, bx                      ; visible_width = 16 + screen_x (since bx < 0)
+    xor bx, bx                      ; clamped screen_x = 0
+
+clipedge_check_right:
+    ; Clip right edge if bx + cx > SCREEN_WIDTH (320)
+    mov ax, bx
+    add ax, cx
+    cmp ax, SCREEN_WIDTH
+    jle clipedge_select_color
+    mov cx, SCREEN_WIDTH
+    sub cx, bx                      ; visible_width = 320 - bx
+
+clipedge_select_color:
+    cmp cx, 0
+    jle clipedge_exit               ; Nothing visible
+
+    ; Pick representative tile color for clean edge slice
+    mov ax, [bp+4]                  ; AL = tile_code
+    mov dl, COLOR_BRICK
+    cmp al, TILE_GROUND
+    jne clipedge_not_ground
+    mov dl, COLOR_GROUND_DIRT
+    jmp clipedge_draw
+clipedge_not_ground:
+    cmp al, TILE_QBLOCK_COIN
+    je clipedge_qblock
+    cmp al, TILE_QBLOCK_MUSH
+    jne clipedge_not_qblock
+clipedge_qblock:
+    mov dl, COLOR_QBLOCK
+    jmp clipedge_draw
+clipedge_not_qblock:
+    cmp al, TILE_EMPTY_BLOCK
+    jne clipedge_not_empty
+    mov dl, COLOR_EMPTY_BLOCK
+    jmp clipedge_draw
+clipedge_not_empty:
+    cmp al, TILE_PIPE_TL
+    je clipedge_pipe
+    cmp al, TILE_PIPE_TR
+    je clipedge_pipe
+    cmp al, TILE_PIPE_BL
+    je clipedge_pipe
+    cmp al, TILE_PIPE_BR
+    jne clipedge_not_pipe
+clipedge_pipe:
+    mov dl, COLOR_PIPE_LIGHT
+    jmp clipedge_draw
+clipedge_not_pipe:
+    cmp al, TILE_STAIR
+    jne clipedge_not_stair
+    mov dl, COLOR_STAIR
+    jmp clipedge_draw
+clipedge_not_stair:
+    cmp al, TILE_COIN
+    jne clipedge_not_coin
+    mov dl, COLOR_COIN
+    jmp clipedge_draw
+clipedge_not_coin:
+    cmp al, TILE_FLAGPOLE
+    jne clipedge_draw
+    mov dl, COLOR_FLAG
+
+clipedge_draw:
+    push bx                         ; clamped x
+    push word [bp+6]                ; y
+    push cx                         ; clipped width
+    push TILE_SIZE                  ; height = 16
+    xor dh, dh
+    push dx                         ; color
+    call FillRect
+
+clipedge_exit:
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    pop bp
+    ret 6
 ; Placed at the end of the program to prevent execution as instructions.
 
 
@@ -976,6 +1443,10 @@ level_time  dw  START_TIME  ; Time remaining in seconds
 score_low   dw  0000h       ; Lower 16 bits of 32-bit score
 score_high  dw  0000h       ; Upper 16 bits of 32-bit score
 camera_x    dw  0000h       ; Camera horizontal pixel offset (0-640)
+;Module 5 & 6: Frame Buffer & Camera Variables
+frame_buffer_seg    dw  0A000h      ; Allocated off-screen 64,000-byte segment
+render_target_seg   dw  0A000h      ; Active draw target (off-screen buffer)
+scroll_fine_x       dw  0000h       ; Fine horizontal scroll offset (camera_x mod 16)
 
 ;Keyboard Input Table 
 key_states          times 128 db 0  ;128-byte lookup array (1=pressed,0=released)
