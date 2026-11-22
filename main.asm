@@ -874,3 +874,333 @@ level_map_orig:
 ; Working copy of the level map (modified during gameplay, restored by ResetMap)
 level_map_work:
     times LEVEL_MAP_BYTES db 0
+
+; ==============================================================================
+; MODULE 4 (PART A): SPRITE BITMAPS & ASSET CREATION
+; Author: Talia (Phase 2 - Step 1)
+; ==============================================================================
+
+SPRITE_W            equ 16          ; Standard sprite width in pixels
+SPRITE_H_SMALL      equ 16          ; Small Mario, Enemies, & Items height
+SPRITE_H_SUPER      equ 32          ; Super Mario height
+
+; ------------------------------------------------------------------------------
+; 1. SMALL MARIO - STANDING (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_small_stand:
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,00h,00h,00h,00h,00h,00h,00h ; Row 0: Hat top
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h ; Row 1: Hat brim
+    db 00h,00h,00h,06h,06h,06h,59h,59h,06h,59h,00h,00h,00h,00h,00h,00h ; Row 2: Hair & eyes
+    db 00h,00h,06h,59h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h,00h ; Row 3: Face & nose
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h ; Row 4: Face
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,00h,00h,00h,00h ; Row 5: Mustache
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h ; Row 6: Chin
+    db 00h,00h,00h,28h,28h,20h,28h,28h,28h,20h,00h,00h,00h,00h,00h,00h ; Row 7: Shirt/straps
+    db 00h,00h,28h,28h,28h,20h,28h,28h,20h,28h,28h,28h,00h,00h,00h,00h ; Row 8: Arms/chest
+    db 00h,28h,28h,28h,28h,20h,20h,20h,20h,28h,28h,28h,28h,00h,00h,00h ; Row 9: Overalls top
+    db 00h,59h,59h,28h,20h,2Ch,20h,20h,2Ch,20h,28h,59h,59h,00h,00h,00h ; Row 10: Hands & buttons
+    db 00h,59h,59h,59h,20h,20h,20h,20h,20h,20h,59h,59h,59h,00h,00h,00h ; Row 11: Overalls waist
+    db 00h,59h,59h,00h,20h,20h,20h,20h,20h,20h,00h,59h,59h,00h,00h,00h ; Row 12: Overalls hips
+    db 00h,00h,00h,20h,20h,20h,00h,00h,20h,20h,20h,00h,00h,00h,00h,00h ; Row 13: Legs
+    db 00h,00h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,00h,00h,00h,00h ; Row 14: Boots top
+    db 00h,06h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,06h,00h,00h,00h ; Row 15: Boots sole
+
+; ------------------------------------------------------------------------------
+; 2. SMALL MARIO - RUNNING (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_small_run:
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h
+    db 00h,00h,00h,06h,06h,06h,59h,59h,06h,59h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h
+    db 00h,00h,28h,28h,28h,20h,28h,28h,20h,28h,00h,00h,00h,00h,00h,00h
+    db 00h,28h,28h,28h,28h,20h,20h,28h,20h,28h,28h,59h,59h,00h,00h,00h ; Forward arm swing
+    db 59h,59h,28h,28h,20h,20h,2Ch,20h,20h,20h,28h,59h,59h,00h,00h,00h ; Back arm swing
+    db 59h,59h,00h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h,00h
+    db 00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,06h,00h,00h,00h,00h ; Stride apart
+    db 00h,20h,20h,20h,00h,00h,00h,20h,20h,20h,06h,06h,00h,00h,00h,00h
+    db 06h,20h,20h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h,00h,00h
+    db 06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 3. SMALL MARIO - JUMPING (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_small_jump:
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,59h,59h,59h,00h,00h ; Raised fist
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,00h,00h,28h,28h,28h,00h,00h ; Hat + raised arm
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h,00h
+    db 00h,00h,00h,06h,06h,06h,59h,59h,06h,59h,00h,28h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h
+    db 00h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,00h,00h,00h,00h,00h
+    db 59h,59h,28h,28h,28h,20h,20h,20h,20h,28h,00h,00h,00h,00h,00h,00h
+    db 59h,59h,00h,20h,20h,2Ch,20h,20h,2Ch,20h,20h,00h,00h,00h,00h,00h
+    db 00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,06h,00h,00h,00h,00h
+    db 00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,06h,06h,00h,00h,00h,00h
+    db 06h,20h,20h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h,00h,00h
+    db 06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 4. SUPER MARIO - STANDING (16x32 = 512 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_super_stand:
+    db 00h,00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h,00h ; Row 0
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h ; Row 1
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h ; Row 2
+    db 00h,00h,00h,06h,06h,06h,59h,59h,59h,06h,59h,00h,00h,00h,00h,00h ; Row 3
+    db 00h,00h,06h,59h,06h,59h,59h,59h,59h,06h,59h,59h,00h,00h,00h,00h ; Row 4
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h ; Row 5
+    db 00h,00h,06h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h ; Row 6
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h ; Row 7
+    db 00h,00h,00h,06h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h,00h ; Row 8
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h ; Row 9
+    db 00h,00h,00h,00h,00h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h,00h ; Row 10: Neck
+    db 00h,00h,00h,28h,28h,28h,20h,28h,28h,20h,28h,28h,00h,00h,00h,00h ; Row 11: Shoulders
+    db 00h,00h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,28h,00h,00h,00h ; Row 12
+    db 00h,28h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,28h,28h,00h,00h ; Row 13
+    db 00h,28h,28h,28h,28h,28h,20h,20h,20h,20h,28h,28h,28h,28h,00h,00h ; Row 14
+    db 00h,28h,28h,28h,28h,20h,20h,20h,20h,20h,20h,28h,28h,28h,00h,00h ; Row 15
+    db 00h,59h,59h,28h,28h,20h,2Ch,20h,20h,2Ch,20h,28h,28h,59h,59h,00h ; Row 16: Buttons
+    db 00h,59h,59h,59h,28h,20h,20h,20h,20h,20h,20h,28h,59h,59h,59h,00h ; Row 17: Hands
+    db 00h,59h,59h,59h,00h,20h,20h,20h,20h,20h,20h,00h,59h,59h,59h,00h ; Row 18
+    db 00h,59h,59h,00h,20h,20h,20h,20h,20h,20h,20h,20h,00h,59h,59h,00h ; Row 19: Overalls
+    db 00h,00h,00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h ; Row 20
+    db 00h,00h,00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h ; Row 21
+    db 00h,00h,00h,20h,20h,20h,20h,00h,00h,20h,20h,20h,20h,00h,00h,00h ; Row 22: Thighs
+    db 00h,00h,00h,20h,20h,20h,20h,00h,00h,20h,20h,20h,20h,00h,00h,00h ; Row 23
+    db 00h,00h,00h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,00h,00h,00h ; Row 24
+    db 00h,00h,00h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,00h,00h,00h ; Row 25: Knees
+    db 00h,00h,00h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,00h,00h,00h ; Row 26
+    db 00h,00h,00h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,00h,00h,00h ; Row 27: Shins
+    db 00h,00h,06h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,06h,00h,00h ; Row 28: Boots top
+    db 00h,00h,06h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,06h,00h,00h ; Row 29
+    db 00h,06h,06h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,06h,06h,00h ; Row 30
+    db 00h,06h,06h,06h,06h,06h,00h,00h,00h,00h,06h,06h,06h,06h,06h,00h ; Row 31: Boots sole
+
+; ------------------------------------------------------------------------------
+; 5. SUPER MARIO - RUNNING (16x32 = 512 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_super_run:
+    db 00h,00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h
+    db 00h,00h,00h,06h,06h,06h,59h,59h,59h,06h,59h,00h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,59h,59h,59h,59h,06h,59h,59h,00h,00h,00h,00h
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h
+    db 00h,00h,06h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h
+    db 00h,00h,00h,06h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,28h,28h,28h,20h,28h,28h,20h,28h,00h,00h,00h,00h,00h
+    db 00h,00h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,00h,00h,00h,00h
+    db 00h,28h,28h,28h,28h,28h,20h,20h,28h,20h,28h,28h,59h,59h,00h,00h
+    db 00h,28h,28h,28h,28h,20h,20h,20h,20h,20h,28h,59h,59h,59h,00h,00h
+    db 59h,59h,28h,28h,20h,20h,2Ch,20h,20h,20h,20h,59h,59h,00h,00h,00h
+    db 59h,59h,59h,28h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h,00h
+    db 59h,59h,00h,00h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h
+    db 00h,00h,20h,20h,20h,20h,00h,00h,20h,20h,20h,20h,20h,00h,00h,00h
+    db 00h,20h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,20h,06h,00h,00h
+    db 00h,20h,20h,20h,00h,00h,00h,00h,00h,00h,20h,20h,06h,06h,00h,00h
+    db 06h,20h,20h,00h,00h,00h,00h,00h,00h,00h,00h,20h,06h,06h,00h,00h
+    db 06h,06h,20h,00h,00h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h
+    db 06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h
+    db 06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 06h,06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 6. SUPER MARIO - JUMPING (16x32 = 512 bytes)
+; ------------------------------------------------------------------------------
+spr_mario_super_jump:
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,59h,59h,59h,00h ; Raised hand
+    db 00h,00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,00h,59h,59h,59h,00h
+    db 00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h
+    db 00h,00h,00h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,00h,00h
+    db 00h,00h,00h,06h,06h,06h,59h,59h,59h,06h,59h,00h,28h,28h,00h,00h
+    db 00h,00h,06h,59h,06h,59h,59h,59h,59h,06h,59h,59h,28h,28h,00h,00h
+    db 00h,00h,06h,59h,06h,06h,59h,59h,59h,06h,59h,59h,59h,00h,00h,00h
+    db 00h,00h,06h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h
+    db 00h,00h,06h,06h,59h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h
+    db 00h,00h,00h,06h,59h,59h,59h,06h,06h,06h,06h,06h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h
+    db 00h,00h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,00h,00h,00h,00h
+    db 00h,28h,28h,28h,28h,28h,20h,28h,28h,20h,28h,28h,00h,00h,00h,00h
+    db 59h,59h,28h,28h,28h,20h,20h,20h,20h,20h,28h,00h,00h,00h,00h,00h
+    db 59h,59h,59h,28h,20h,20h,2Ch,20h,20h,2Ch,20h,00h,00h,00h,00h,00h
+    db 59h,59h,00h,00h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h,00h
+    db 00h,00h,20h,20h,20h,20h,20h,20h,20h,20h,20h,20h,20h,00h,00h,00h
+    db 00h,20h,20h,20h,20h,00h,00h,00h,00h,20h,20h,20h,20h,06h,00h,00h
+    db 00h,20h,20h,20h,00h,00h,00h,00h,00h,00h,20h,20h,06h,06h,00h,00h
+    db 06h,20h,20h,00h,00h,00h,00h,00h,00h,00h,00h,20h,06h,06h,00h,00h
+    db 06h,06h,20h,00h,00h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h
+    db 06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,06h,06h,00h,00h
+    db 06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 06h,06h,06h,06h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 7. GOOMBA - WALKING (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_goomba_walk:
+    db 00h,00h,00h,00h,00h,00h,06h,06h,06h,06h,00h,00h,00h,00h,00h,00h ; Row 0
+    db 00h,00h,00h,00h,00h,06h,06h,06h,06h,06h,06h,00h,00h,00h,00h,00h ; Row 1
+    db 00h,00h,00h,00h,06h,06h,06h,06h,06h,06h,06h,06h,00h,00h,00h,00h ; Row 2
+    db 00h,00h,00h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,00h,00h,00h ; Row 3
+    db 00h,00h,06h,06h,01h,01h,06h,06h,06h,06h,01h,01h,06h,06h,00h,00h ; Row 4: Eyebrows
+    db 00h,06h,06h,06h,0Fh,01h,06h,06h,06h,06h,01h,0Fh,06h,06h,06h,00h ; Row 5: Eyes
+    db 00h,06h,06h,06h,0Fh,01h,06h,06h,06h,06h,01h,0Fh,06h,06h,06h,00h ; Row 6: Eyes
+    db 06h,06h,06h,06h,0Fh,0Fh,06h,06h,06h,06h,0Fh,0Fh,06h,06h,06h,06h ; Row 7
+    db 06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h ; Row 8
+    db 00h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,00h ; Row 9
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h ; Row 10: Stem
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h ; Row 11: Stem
+    db 00h,00h,01h,01h,01h,59h,59h,59h,59h,59h,59h,01h,01h,01h,00h,00h ; Row 12: Feet
+    db 00h,01h,01h,01h,01h,01h,00h,00h,00h,00h,01h,01h,01h,01h,01h,00h ; Row 13: Feet
+    db 00h,01h,01h,01h,01h,01h,00h,00h,00h,00h,01h,01h,01h,01h,01h,00h ; Row 14: Feet
+    db 00h,00h,01h,01h,01h,00h,00h,00h,00h,00h,00h,01h,01h,01h,00h,00h ; Row 15: Soles
+
+; ------------------------------------------------------------------------------
+; 8. GOOMBA - FLATTENED (16x16 = 256 bytes, bottom-aligned)
+; ------------------------------------------------------------------------------
+spr_goomba_flat:
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,00h,00h ; Squashed cap
+    db 06h,06h,06h,0Fh,01h,06h,06h,06h,06h,06h,06h,01h,0Fh,06h,06h,06h ; Squashed eyes
+    db 06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h,06h
+    db 00h,00h,01h,01h,59h,59h,59h,59h,59h,59h,59h,59h,01h,01h,00h,00h
+    db 00h,01h,01h,01h,01h,59h,59h,59h,59h,59h,59h,01h,01h,01h,01h,00h
+    db 00h,01h,01h,01h,00h,00h,00h,00h,00h,00h,00h,00h,01h,01h,01h,00h
+
+; ------------------------------------------------------------------------------
+; 9. KOOPA TROOPA - WALKING (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_koopa_walk:
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,2Ch,2Ch,2Ch,00h,00h,00h,00h ; Row 0: Head top
+    db 00h,00h,00h,00h,00h,00h,00h,00h,2Ch,2Ch,0Fh,01h,2Ch,00h,00h,00h ; Row 1: Eye
+    db 00h,00h,00h,00h,00h,00h,00h,00h,2Ch,2Ch,0Fh,01h,2Ch,2Ch,00h,00h ; Row 2: Beak
+    db 00h,00h,00h,00h,00h,00h,00h,00h,2Ch,2Ch,2Ch,2Ch,2Ch,00h,00h,00h ; Row 3: Chin
+    db 00h,00h,00h,00h,02h,02h,02h,02h,2Ch,2Ch,00h,00h,00h,00h,00h,00h ; Row 4: Neck + shell
+    db 00h,00h,00h,02h,2Fh,2Fh,2Fh,2Fh,02h,2Ch,00h,00h,00h,00h,00h,00h ; Row 5: Shell top
+    db 00h,00h,02h,2Fh,2Fh,0Fh,2Fh,2Fh,2Fh,02h,00h,00h,00h,00h,00h,00h ; Row 6: Shell pattern
+    db 00h,02h,2Fh,2Fh,2Fh,2Fh,2Fh,0Fh,2Fh,2Fh,02h,00h,00h,00h,00h,00h ; Row 7
+    db 00h,02h,2Fh,0Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,02h,2Ch,2Ch,00h,00h,00h ; Row 8: Shell + arm
+    db 00h,02h,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,02h,2Ch,2Ch,00h,00h,00h,00h ; Row 9
+    db 00h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,00h,00h,00h,00h,00h,00h ; Row 10: White rim
+    db 00h,00h,0Fh,0Fh,2Ch,2Ch,2Ch,2Ch,0Fh,0Fh,00h,00h,00h,00h,00h,00h ; Row 11: Belly
+    db 00h,00h,00h,2Ch,2Ch,00h,00h,2Ch,2Ch,00h,00h,00h,00h,00h,00h,00h ; Row 12: Legs
+    db 00h,00h,00h,2Ch,2Ch,00h,00h,2Ch,2Ch,00h,00h,00h,00h,00h,00h,00h ; Row 13: Legs
+    db 00h,00h,2Ch,2Ch,2Ch,2Ch,00h,2Ch,2Ch,2Ch,2Ch,00h,00h,00h,00h,00h ; Row 14: Feet
+    db 00h,00h,2Ch,2Ch,2Ch,2Ch,00h,2Ch,2Ch,2Ch,2Ch,00h,00h,00h,00h,00h ; Row 15: Feet
+
+; ------------------------------------------------------------------------------
+; 10. KOOPA SHELL (16x16 = 256 bytes, bottom-aligned)
+; ------------------------------------------------------------------------------
+spr_koopa_shell:
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,02h,02h,02h,02h,02h,02h,00h,00h,00h,00h,00h ; Shell dome
+    db 00h,00h,00h,02h,02h,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,02h,02h,00h,00h,00h
+    db 00h,00h,02h,2Fh,2Fh,0Fh,2Fh,2Fh,2Fh,2Fh,0Fh,2Fh,2Fh,02h,00h,00h
+    db 00h,02h,2Fh,2Fh,2Fh,2Fh,2Fh,0Fh,0Fh,2Fh,2Fh,2Fh,2Fh,2Fh,02h,00h
+    db 00h,02h,2Fh,0Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,0Fh,2Fh,02h,00h
+    db 00h,02h,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,2Fh,02h,00h
+    db 00h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,00h ; White rim
+    db 00h,00h,0Fh,0Fh,01h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,01h,0Fh,0Fh,00h,00h ; Underside
+    db 00h,00h,00h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,00h,00h,00h
+    db 00h,00h,00h,00h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 11. SUPER MUSHROOM POWER-UP (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_mushroom:
+    db 00h,00h,00h,00h,00h,28h,28h,28h,28h,28h,28h,00h,00h,00h,00h,00h ; Row 0
+    db 00h,00h,00h,28h,28h,28h,0Fh,0Fh,0Fh,0Fh,28h,28h,28h,00h,00h,00h ; Row 1: Top spot
+    db 00h,00h,28h,28h,28h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,28h,28h,28h,00h,00h ; Row 2
+    db 00h,28h,28h,28h,28h,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,28h,28h,28h,28h,00h ; Row 3
+    db 00h,28h,0Fh,0Fh,28h,28h,0Fh,0Fh,0Fh,0Fh,28h,28h,0Fh,0Fh,28h,00h ; Row 4: Side spots
+    db 28h,0Fh,0Fh,0Fh,0Fh,28h,28h,28h,28h,28h,28h,0Fh,0Fh,0Fh,0Fh,28h ; Row 5
+    db 28h,0Fh,0Fh,0Fh,0Fh,28h,28h,28h,28h,28h,28h,0Fh,0Fh,0Fh,0Fh,28h ; Row 6
+    db 28h,28h,0Fh,0Fh,28h,28h,28h,28h,28h,28h,28h,28h,0Fh,0Fh,28h,28h ; Row 7
+    db 28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h,28h ; Row 8
+    db 00h,28h,28h,28h,59h,59h,59h,59h,59h,59h,59h,59h,28h,28h,28h,00h ; Row 9: Cap rim
+    db 00h,00h,00h,59h,59h,59h,01h,59h,59h,01h,59h,59h,59h,00h,00h,00h ; Row 10: Stem eyes
+    db 00h,00h,00h,59h,59h,59h,01h,59h,59h,01h,59h,59h,59h,00h,00h,00h ; Row 11
+    db 00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h ; Row 12
+    db 00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h ; Row 13
+    db 00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h ; Row 14
+    db 00h,00h,00h,00h,00h,59h,59h,59h,59h,59h,59h,00h,00h,00h,00h,00h ; Row 15
+
+; ------------------------------------------------------------------------------
+; 12. GOLD COIN SPRITE (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_coin:
+    db 00h,00h,00h,00h,00h,00h,01h,01h,01h,01h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,01h,2Ch,2Ch,2Ch,2Ch,01h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,2Ch,2Ch,01h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,01h,2Ch,0Fh,2Ch,01h,2Ch,2Ch,01h,00h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,01h,2Ch,0Fh,2Ch,2Ch,01h,2Ch,2Ch,2Ch,01h,00h,00h,00h
+    db 00h,00h,00h,00h,01h,2Ch,2Ch,2Ch,01h,2Ch,2Ch,01h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,01h,2Ch,2Ch,2Ch,2Ch,2Ch,2Ch,01h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,01h,2Ch,2Ch,2Ch,2Ch,01h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,01h,01h,01h,01h,00h,00h,00h,00h,00h,00h
+
+; ------------------------------------------------------------------------------
+; 13. FLAGPOLE TOP & PENNANT FLAG (16x16 = 256 bytes)
+; ------------------------------------------------------------------------------
+spr_flagpole_flag:
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h ; Finial ball
+    db 00h,00h,00h,00h,00h,00h,0Ah,0Ah,0Ah,0Ah,00h,00h,00h,00h,00h,00h ; Finial ball
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h ; Flag top
+    db 00h,00h,00h,0Fh,0Fh,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,0Fh,0Fh,0Fh,02h,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h ; Flag emblem
+    db 0Fh,0Fh,0Fh,02h,02h,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,0Fh,0Fh,0Fh,02h,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,0Fh,0Fh,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,0Fh,0Fh,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h ; Flag bottom
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h ; Pole shaft
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
+    db 00h,00h,00h,00h,00h,00h,00h,0Ah,0Ah,00h,00h,00h,00h,00h,00h,00h
