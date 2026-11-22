@@ -1,5 +1,5 @@
 ; File:mario.asm
-; Author:Talia
+; Author:Amna
 ; Module:1-Program Skeleton & DOS Setup
 ; Description:Video Mode 13h & Display Primitives 
 ; Target:NASM Assembler -> DOSBox (16-bit Real Mode)
@@ -808,6 +808,152 @@ drawmap_col_loop:
     pop bp
     ret 2
 ; GAME DATA & VARIABLES
+; ==============================================================================
+; MODULE 4 (PART B): SPRITE RENDERING ENGINE
+; Author: Amna (Phase 2 - Step 2)
+; ==============================================================================
+
+; Procedure: DrawSprite
+; Purpose:   Renders a 16x16 or 16x32 sprite at signed screen coordinates (x, y)
+;            with 00h transparency, horizontal mirroring, invulnerability blink,
+;            and strict VGA 0A000h boundary clipping.
+; Inputs:    Stack parameters:
+;              [bp+10] = x (signed screen X coordinate)
+;              [bp+8]  = y (signed screen Y coordinate)
+;              [bp+6]  = address (offset of sprite bitmap in CS/DS)
+;              [bp+4]  = flags (bit 0: flip_h, bit 1: tall 16x32, bit 2: blink)
+; Outputs:   Writes non-transparent sprite pixels to VGA segment 0A000h
+; Registers: Preserves ALL (cleans 8 bytes from stack)
+DrawSprite:
+    push bp
+    mov bp, sp
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    ; Ensure DS = CS (.COM single segment) and ES = VGA_SEGMENT (0A000h)
+    mov ax, cs
+    mov ds, ax
+    mov ax, VGA_SEGMENT
+    mov es, ax
+
+    mov dx, [bp+4]                  ; DX = flags
+
+    ; 1. Blink Effect: If SPR_FLAG_BLINK is set, skip drawing on odd timer ticks
+    test dx, SPR_FLAG_BLINK
+    jz drawsprite_check_height
+    test byte [mario_invuln_timer], 01h
+    jnz drawsprite_exit             ; Alternate-frame skip for 2s invulnerability
+
+drawsprite_check_height:
+    ; 2. Determine sprite height (16 or 32 rows)
+    mov cx, SPRITE_H_SMALL          ; Default height = 16
+    test dx, SPR_FLAG_TALL
+    jz drawsprite_check_bounds
+    mov cx, SPRITE_H_SUPER          ; Tall sprite height = 32
+
+drawsprite_check_bounds:
+    ; 3. Quick trivial-rejection bounds check (completely off-screen)
+    mov ax, [bp+10]                 ; AX = start_x (signed)
+    cmp ax, SCREEN_WIDTH
+    jge drawsprite_exit             ; Completely off right edge (x >= 320)
+    cmp ax, -SPRITE_W
+    jle drawsprite_exit             ; Completely off left edge (x <= -16)
+
+    mov bx, [bp+8]                  ; BX = start_y (signed)
+    cmp bx, SCREEN_HEIGHT
+    jge drawsprite_exit             ; Completely off bottom edge (y >= 200)
+    mov di, cx
+    neg di                          ; DI = -height (-16 or -32)
+    cmp bx, di
+    jle drawsprite_exit             ; Completely off top edge (y <= -height)
+
+    ; Initialize row loop counters
+    mov si, [bp+6]                  ; SI = pointer to current row in sprite bitmap
+    ; BX = current screen_y (starts at [bp+8])
+    ; CX = remaining rows to process (16 or 32)
+
+drawsprite_row_loop:
+    ; Vertical edge clipping for current row
+    cmp bx, 0
+    jl drawsprite_next_row          ; Row is above top of screen (y < 0), skip
+    cmp bx, SCREEN_HEIGHT
+    jge drawsprite_exit             ; Reached bottom of screen (y >= 200), done
+
+    ; Compute VGA row base offset: DI = (y * 320) = (y << 8) + (y << 6)
+    mov di, bx
+    shl di, 8                       ; DI = y * 256
+    mov ax, bx
+    shl ax, 6                       ; AX = y * 64
+    add di, ax                      ; DI = y * 320
+
+    push cx                         ; Save outer row counter
+    push bx                         ; Save current screen_y
+
+    mov bx, [bp+10]                 ; BX = current screen_x (starts at start_x)
+    xor cx, cx                      ; CX = column index (0..15)
+
+drawsprite_col_loop:
+    ; Horizontal edge clipping for current pixel
+    cmp bx, 0
+    jl drawsprite_next_col          ; Pixel is left of screen (x < 0), skip
+    cmp bx, SCREEN_WIDTH
+    jge drawsprite_row_done         ; Past right edge (x >= 320), finish row early
+
+    ; Fetch pixel color (normal vs horizontally flipped)
+    push bx                         ; Temporarily free BX for source indexing
+    mov bx, cx                      ; BX = col (0..15)
+    test word [bp+4], SPR_FLAG_FLIP_H
+    jz drawsprite_read_pixel
+    mov bx, 15
+    sub bx, cx                      ; Mirror index: 15 - col
+
+drawsprite_read_pixel:
+    mov al, [si + bx]               ; AL = sprite pixel color
+    pop bx                          ; Restore screen_x
+
+    ; Skip transparent pixels (color 00h)
+    cmp al, COLOR_TRANSPARENT
+    je drawsprite_next_col
+
+    ; Write pixel to VGA memory at ES:[DI + screen_x]
+    push di
+    add di, bx                      ; DI = y * 320 + screen_x
+    mov [es:di], al
+    pop di
+
+drawsprite_next_col:
+    inc bx                          ; screen_x++
+    inc cx                          ; col++
+    cmp cx, SPRITE_W
+    jb drawsprite_col_loop
+
+drawsprite_row_done:
+    pop bx                          ; Restore current screen_y
+    pop cx                          ; Restore outer row counter
+
+drawsprite_next_row:
+    add si, SPRITE_W                ; Advance bitmap pointer by 16 bytes (next row)
+    inc bx                          ; screen_y++
+    dec cx                          ; rows_remaining--
+    jnz drawsprite_row_loop
+
+drawsprite_exit:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    pop bp
+    ret 8
 ; Placed at the end of the program to prevent execution as instructions.
 
 
@@ -883,7 +1029,10 @@ level_map_work:
 SPRITE_W            equ 16          ; Standard sprite width in pixels
 SPRITE_H_SMALL      equ 16          ; Small Mario, Enemies, & Items height
 SPRITE_H_SUPER      equ 32          ; Super Mario height
-
+; Sprite Rendering Flags (Bitmask for DrawSprite 'flags' parameter)
+SPR_FLAG_FLIP_H     equ 01h         ; Bit 0: 1 = Flip horizontally (face left), 0 = Normal (face right)
+SPR_FLAG_TALL       equ 02h         ; Bit 1: 1 = 16x32 Super Mario, 0 = 16x16 standard sprite
+SPR_FLAG_BLINK      equ 04h         ; Bit 2: 1 = Invulnerability blink active (skips drawing if odd frame)
 ; ------------------------------------------------------------------------------
 ; 1. SMALL MARIO - STANDING (16x16 = 256 bytes)
 ; ------------------------------------------------------------------------------
