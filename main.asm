@@ -3,7 +3,7 @@
 ; Module:1-Program Skeleton & DOS Setup
 ; Description:Video Mode 13h & Display Primitives 
 ; Target:NASM Assembler -> DOSBox (16-bit Real Mode)
-[org 0x100]      
+[org 0x100]    
 
 ;                        SYSTEM CONSTANTS & DEFINITIONS (EQU Statements)
 
@@ -66,6 +66,7 @@ start:
 
 SetupProgram:
     call InitVideoMode13h           ; Switch to VGA Mode 13h (320x200)
+    call HookKeyboardISR            ; Hook INT 09h custom keyboard handler
     ret
 
 ;Subroutine: MainLoop
@@ -75,19 +76,72 @@ MainLoop:
     push ax
     call ResetMap                   ; Copy original map into working map
 
-    push 0                          ; start_col = 0 (first 20 columns; change to 20 or 40 to test scrolling windows)
+    push 0                          ; start_col = 0
     call DrawMap                    ; Render visible 20x12 tile window
-
-    mov ah, 00h                     ; Wait for any keypress so screen stays visible
-    int 16h
-    pop ax
-    ret
 
 ; Subroutine: CleanExit
 ; Purpose:    Safely restores execution state and returns control to DOS.
 ; Inputs:     None | Outputs: None | Registers Changed: None (Exits)
 
+test_kbd_loop:
+    ; Concurrent key test: Hold RIGHT + LSHIFT + SPACE simultaneously, press ESC to exit
+    cmp byte [key_states + KEY_ESC], 1
+    je test_kbd_done
+
+    ; Visual feedback on top-left HUD bar (row 0) for concurrent presses:
+    ; Square 1 (x=4): Left Arrow | Square 2 (x=20): Right Arrow
+    ; Square 3 (x=36): Left Shift | Square 4 (x=52): Spacebar
+    xor ah, ah
+    mov al, [key_states + KEY_LEFT]
+    shl al, 2                       ; Color 0 (black) if released, 4 (red) if pressed
+    push 4
+    push 4
+    push 8
+    push 8
+    push ax
+    call FillRect
+
+    xor ah, ah
+    mov al, [key_states + KEY_RIGHT]
+    shl al, 1                       ; Color 0 if released, 2 (green) if pressed
+    push 20
+    push 4
+    push 8
+    push 8
+    push ax
+    call FillRect
+
+    cmp byte [key_states + KEY_LSHIFT], 1
+    mov ax, 0
+    jne .draw_shift
+    mov ax, 14
+.draw_shift:
+    push 36
+    push 4
+    push 8
+    push 8
+    push ax
+    call FillRect
+
+    cmp byte [key_states + KEY_SPACE], 1
+    mov ax, 0
+    jne .draw_space
+    mov ax, 15                      ; Color 15 (white) if pressed
+.draw_space:
+    push 52
+    push 4
+    push 8
+    push 8
+    push ax
+    call FillRect
+
+    jmp test_kbd_loop
+
+test_kbd_done:
+    pop ax
+    ret
 CleanExit:
+    call UnhookKeyboardISR          ; Restore original INT 09h vector BEFORE exit
     call RestoreTextMode            ; Restore 80x25 text mode before exit
     mov ah, 4Ch                     ; INT 21h, AH=4Ch: Terminate Program
     mov al, 00h                     ; Return Code 0 (Clean exit)
@@ -480,48 +534,69 @@ DrawTile:
     push COLOR_SKY
     call FillRect
 
-    ; Dispatch based on tile_code
+       ; Dispatch based on tile_code.
+    ; Conditional jumps stay nearby; JMP handles the longer destination.
+
     cmp al, TILE_SKY
-    je drawtile_exit                ; Sky is already drawn
+    jne .check_ground
+    jmp drawtile_mid_exit
 
+.check_ground:
     cmp al, TILE_GROUND
-    je drawtile_ground
+    jne .check_brick
+    jmp drawtile_ground
 
+.check_brick:
     cmp al, TILE_BRICK
-    je drawtile_brick
+    jne .check_qblock_coin
+    jmp drawtile_brick
 
+.check_qblock_coin:
     cmp al, TILE_QBLOCK_COIN
-    je drawtile_qblock
-
+    je .draw_qblock
     cmp al, TILE_QBLOCK_MUSH
-    je drawtile_qblock
+    jne .check_empty
+.draw_qblock:
+    jmp drawtile_qblock
 
+.check_empty:
     cmp al, TILE_EMPTY_BLOCK
-    je drawtile_empty
+    jne .check_pipe_tl
+    jmp drawtile_empty
 
+.check_pipe_tl:
     cmp al, TILE_PIPE_TL
-    je drawtile_pipe_top
-
+    je .draw_pipe_top
     cmp al, TILE_PIPE_TR
-    je drawtile_pipe_top
+    jne .check_pipe_bl
+.draw_pipe_top:
+    jmp drawtile_pipe_top
 
+.check_pipe_bl:
     cmp al, TILE_PIPE_BL
-    je drawtile_pipe_body
-
+    je .draw_pipe_body
     cmp al, TILE_PIPE_BR
-    je drawtile_pipe_body
+    jne .check_stair
+.draw_pipe_body:
+    jmp drawtile_pipe_body
 
+.check_stair:
     cmp al, TILE_STAIR
-    je drawtile_stair
+    jne .check_coin
+    jmp drawtile_stair
 
+.check_coin:
     cmp al, TILE_COIN
-    je drawtile_coin
+    jne .check_flagpole
+    jmp drawtile_coin
 
+.check_flagpole:
     cmp al, TILE_FLAGPOLE
-    je drawtile_flagpole
+    jne .unknown_tile
+    jmp drawtile_flagpole
 
+.unknown_tile:
     jmp drawtile_exit
-
 drawtile_ground:
     ; Top 4px grass strip
     push bx
@@ -632,6 +707,7 @@ drawtile_empty:
     push 14
     push COLOR_EMPTY_BLOCK
     call FillRect
+drawtile_mid_exit:
     jmp drawtile_exit
 
 drawtile_pipe_top:
@@ -848,7 +924,7 @@ DrawSprite:
     test dx, SPR_FLAG_BLINK
     jz drawsprite_check_height
     test byte [mario_invuln_timer], 01h
-    jnz drawsprite_exit             ; Alternate-frame skip for 2s invulnerability
+    jnz drawsprite_early_exit         ; Alternate-frame skip for 2s invulnerability
 
 drawsprite_check_height:
     ; 2. Determine sprite height (16 or 32 rows)
@@ -861,29 +937,32 @@ drawsprite_check_bounds:
     ; 3. Quick trivial-rejection bounds check (completely off-screen)
     mov ax, [bp+10]                 ; AX = start_x (signed)
     cmp ax, SCREEN_WIDTH
-    jge drawsprite_exit             ; Completely off right edge (x >= 320)
+    jge drawsprite_early_exit            ; Completely off right edge (x >= 320)
     cmp ax, -SPRITE_W
-    jle drawsprite_exit             ; Completely off left edge (x <= -16)
+    jle drawsprite_early_exit          ; Completely off left edge (x <= -16)
 
     mov bx, [bp+8]                  ; BX = start_y (signed)
     cmp bx, SCREEN_HEIGHT
-    jge drawsprite_exit             ; Completely off bottom edge (y >= 200)
+    jge drawsprite_early_exit           ; Completely off bottom edge (y >= 200)
     mov di, cx
     neg di                          ; DI = -height (-16 or -32)
     cmp bx, di
-    jle drawsprite_exit             ; Completely off top edge (y <= -height)
+    jle drawsprite_early_exit            ; Completely off top edge (y <= -height)
 
     ; Initialize row loop counters
     mov si, [bp+6]                  ; SI = pointer to current row in sprite bitmap
     ; BX = current screen_y (starts at [bp+8])
     ; CX = remaining rows to process (16 or 32)
+    jmp drawsprite_row_loop         ; Jump over trampoline into loop
+drawsprite_early_exit:
+    jmp drawsprite_exit
 
 drawsprite_row_loop:
     ; Vertical edge clipping for current row
     cmp bx, 0
     jl drawsprite_next_row          ; Row is above top of screen (y < 0), skip
     cmp bx, SCREEN_HEIGHT
-    jge drawsprite_exit             ; Reached bottom of screen (y >= 200), done
+    jge drawsprite_early_exit    ; Reached bottom of screen (y >= 200), done
 
     ; Compute VGA row base offset: DI = (y * 320) = (y << 8) + (y << 6)
     mov di, bx
@@ -957,6 +1036,135 @@ drawsprite_exit:
 ; Placed at the end of the program to prevent execution as instructions.
 
 
+; ==============================================================================
+; MODULE 5: CUSTOM KEYBOARD INTERRUPT HANDLER (INT 09h)
+; Author: Amna (Phase 3 - Step 1)
+; Course Alignment: Week 14 (Hooking an Interrupt, Hardware Interrupts, I/O Ports)
+; ==============================================================================
+
+; Hardware I/O Ports & PIC Constants
+KBD_DATA_PORT       equ 60h         ; 8042 Keyboard Controller Scan Code Port
+PIC_CMD_PORT        equ 20h         ; 8259A Master PIC Command Port
+PIC_EOI             equ 20h         ; Non-Specific End-Of-Interrupt (EOI) command
+SCAN_EXTENDED_E0    equ 0E0h        ; Extended scan code prefix (Arrow keys, etc.)
+SCAN_RELEASE_MASK   equ 80h         ; Bit 7 = 1 indicates key release (Break code)
+SCAN_CODE_MASK      equ 7Fh         ; Lower 7 bits = base scan code (0..127)
+
+; Procedure: HookKeyboardISR
+; Purpose:   Saves the original BIOS INT 09h interrupt vector using DOS service
+;            INT 21h / AH=35h and installs our custom KeyboardISR via AH=25h.
+; Inputs:    None
+; Outputs:   old_int09_offset and old_int09_segment populated; IVT updated
+; Registers: Preserves ALL
+HookKeyboardISR:
+    push ax
+    push bx
+    push dx
+    push ds
+    push es
+
+    mov ax, cs
+    mov ds, ax                      ; Ensure DS = CS (.COM single segment)
+
+    ; 1. Get existing INT 09h vector (ES:BX = current handler address)
+    mov ah, 35h                     ; DOS Get Interrupt Vector
+    mov al, 09h                     ; IRQ1 Keyboard Hardware Interrupt
+    int 21h
+    mov [old_int09_offset], bx
+    mov [old_int09_segment], es
+
+    ; 2. Install custom INT 09h vector (DS:DX = KeyboardISR)
+    cli                             ; Disable interrupts while modifying IVT
+    mov dx, KeyboardISR
+    mov ah, 25h                     ; DOS Set Interrupt Vector
+    mov al, 09h
+    int 21h
+    sti                             ; Re-enable hardware interrupts
+
+    pop es
+    pop ds
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+; Procedure: UnhookKeyboardISR
+; Purpose:   Restores the original BIOS INT 09h interrupt vector before program exit.
+; Inputs:    None
+; Outputs:   Original INT 09h vector restored in IVT
+; Registers: Preserves ALL
+UnhookKeyboardISR:
+    push ax
+    push dx
+    push ds
+
+    ; Guard check: only restore if vector was actually hooked
+    cmp word [old_int09_segment], 0
+    je .unhook_done
+
+    cli                             ; Disable interrupts during IVT restoration
+    mov dx, [cs:old_int09_offset]
+    mov ds, [cs:old_int09_segment]
+    mov ah, 25h                     ; DOS Set Interrupt Vector
+    mov al, 09h
+    int 21h
+    sti
+
+.unhook_done:
+    pop ds
+    pop dx
+    pop ax
+    ret
+
+; Interrupt Service Routine: KeyboardISR
+; Purpose:   Hardware IRQ1 handler for INT 09h. Reads raw make/break scan codes
+;            from Port 60h, filters E0h extended prefixes, updates the 128-byte
+;            key_states array for multi-key rollover, acknowledges PIC (EOI),
+;            and returns via IRET.
+; Inputs:    Hardware interrupt from keyboard controller (Port 60h)
+; Outputs:   Updates [cs:key_states + scan_code] (1 = pressed, 0 = released)
+; Registers: Preserves ALL (critical for asynchronous hardware interrupts)
+KeyboardISR:
+    push ax
+    push bx
+    push ds
+
+    ; Hardware interrupts can fire when DS points to video memory (0A000h) or DOS
+    mov ax, cs
+    mov ds, ax                      ; Point DS to our .COM code/data segment
+
+    ; 1. Read raw scan code directly from keyboard I/O port 60h
+    in al, KBD_DATA_PORT
+
+    ; 2. Filter extended prefix byte (E0h sent before Left/Right/Up/Down arrows)
+    cmp al, SCAN_EXTENDED_E0
+    je .send_eoi                    ; Ignore E0h prefix; next IRQ carries actual code
+
+    ; 3. Separate make/break flag (bit 7) from 7-bit scan code index
+    mov bl, al
+    and bl, SCAN_CODE_MASK          ; BL = base scan code (0..127)
+    xor bh, bh                      ; BX = 16-bit index into key_states
+
+    test al, SCAN_RELEASE_MASK      ; Check Bit 7 (1 = Break/Release, 0 = Make/Press)
+    jnz .key_released
+
+.key_pressed:
+    mov byte [key_states + bx], 1   ; Mark key as currently held down
+    jmp .send_eoi
+
+.key_released:
+    mov byte [key_states + bx], 0   ; Mark key as released
+
+.send_eoi:
+    ; 4. Send End-Of-Interrupt (EOI) signal to 8259A PIC (Port 20h)
+    mov al, PIC_EOI
+    out PIC_CMD_PORT, al
+
+    pop ds
+    pop bx
+    pop ax
+    iret                            ; Interrupt return (restores IP, CS, and FLAGS)
+
 ;Hero (Mario) Data Structure
 mario_world_x  dw  0020h       ; World X position (8.8 fixed-point, 32px start)
 mario_world_y  dw  0090h       ; World Y position (8.8 fixed-point, standing on row 9)
@@ -979,6 +1187,8 @@ camera_x    dw  0000h       ; Camera horizontal pixel offset (0-640)
 
 ;Keyboard Input Table 
 key_states          times 128 db 0  ;128-byte lookup array (1=pressed,0=released)
+old_int09_offset    dw  0000h
+old_int09_segment   dw  0000h
 ;Module 2 Palette Verification Data
 palette_test_table:
     db COLOR_SKY,        COLOR_GROUND_TOP, COLOR_GROUND_DIRT, COLOR_BRICK
