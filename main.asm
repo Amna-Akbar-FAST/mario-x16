@@ -65,6 +65,8 @@ start:
 ; Inputs: None | Outputs: None | Registers Preserved: ALL
 SetupProgram:
     call InitVideoMode13h           ; Switch to VGA Mode 13h (320x200)
+    call InitFrameBuffer            ; Allocate off-screen render buffer
+    call HookKeyboardISR            ; Hook INT 09h custom keyboard handler
     ret
 
 ;Subroutine: MainLoop
@@ -76,13 +78,13 @@ MainLoop:
 
     call ResetMap                   ; Copy original map into working map
 
-    push 0                          ; start_col = 0 (first 20 columns; change to 20 or 40 to test scrolling windows)
-    call DrawMap                    ; Render visible 20x12 tile window
+   push COLOR_SKY
+    call ClearFrameBuffer           ; Fill off-screen buffer with sky blue
 
-    mov ah, 00h                     ; Wait for any keypress so screen stays visible
-    int 16h
-    pop ax
-    ret
+    call DrawScrolledMap            ; Render scrolled map into off-screen buffer
+    call FlipFrameBuffer            ; Copy off-screen buffer to VGA screen (0A000h)
+
+    jmp test_kbd_loop               ; Run concurrent key test (ESC exits cleanly)
 
 ; Subroutine: CleanExit
 ; Purpose:    Safely restores execution state and returns control to DOS.
@@ -1047,15 +1049,6 @@ FRAME_BUFFER_WORDS  equ 32000       ; 64,000 / 2 words for REP STOSW / REP MOVSW
 FRAME_BUFFER_PARAS  equ 4000        ; 64,000 / 16 paragraphs for DOS INT 21h alloc
 VISIBLE_DRAW_COLS   equ 21          ; 20 visible columns + 1 partial edge column
 
-; Safe Sprite Constants (if not already defined by Module 4 bitmap header)
-%ifndef SPRITE_W
-SPRITE_W            equ 16          ; Standard sprite width (16px)
-SPRITE_H_SMALL      equ 16          ; Small Mario / enemy height (16px)
-SPRITE_H_SUPER      equ 32          ; Super Mario height (32px)
-SPR_FLAG_FLIP_H     equ 01h         ; Bit 0: Mirror horizontally
-SPR_FLAG_TALL       equ 02h         ; Bit 1: 16x32 tall sprite
-SPR_FLAG_BLINK      equ 04h         ; Bit 2: Alternate-frame invulnerability blink
-%endif
 
 ; Procedure: InitFrameBuffer
 ; Purpose:   Allocates a secondary 64,000-byte (4,000-paragraph) memory segment
@@ -1218,7 +1211,7 @@ updatecam_check_right_end:
     cmp ax, LEVEL_WIDTH_PX - TILE_SIZE
     jbe updatecam_done
 
-    mov ax, (LEVEL_WIDTH_PX - TILE_SIZE) << 8
+    mov ax, ((LEVEL_WIDTH_PX - TILE_SIZE) << 8) & 0FFFFh
     mov [mario_world_x], ax
     mov word [mario_vx], 0
 
